@@ -32,7 +32,7 @@ clip: 0.0
 use_cat: True
 net: vit_small_patch2_32
 net_from_name: False
-data_dir: ./data
+data_dir: /home/wangjunjie/dataset
 dataset: cifar100
 train_sampler: RandomSampler
 num_classes: 100
@@ -40,7 +40,7 @@ num_workers: 4
 seed: 0
 world_size: 1
 rank: 0
-multiprocessing_distributed: True
+multiprocessing_distributed: False
 dist_url: tcp://127.0.0.1:10006
 dist_backend: nccl
 gpu: None

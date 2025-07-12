@@ -91,7 +91,10 @@ class BasicDataset(Dataset):
                 img = Image.fromarray(img)
             img_w = self.transform(img)
             if not self.is_ulb:
-                return {'idx_lb': idx, 'x_lb': img_w, 'y_lb': target} 
+                if self.alg == 'wsc':
+                    return {'idx_lb': idx, 'x_lb_w': img_w, 'x_lb_s_0': self.strong_transform(img), 'x_lb_s_1': self.strong_transform(img), 'y_lb': target}
+                else:
+                    return {'idx_lb': idx, 'x_lb': img_w, 'y_lb': target} 
             else:
                 if self.alg == 'fullysupervised' or self.alg == 'supervised':
                     return {'idx_ulb': idx}
@@ -112,6 +115,8 @@ class BasicDataset(Dataset):
                     return {'idx_ulb': idx, 'x_ulb_w': img_w, 'x_ulb_s_0': img_s1, 'x_ulb_s_1':img_s2, 'x_ulb_s_0_rot':img_s1_rot, 'rot_v':rotate_v_list.index(rotate_v1)}
                 elif self.alg == 'comatch':
                     return {'idx_ulb': idx, 'x_ulb_w': img_w, 'x_ulb_s_0': self.strong_transform(img), 'x_ulb_s_1':self.strong_transform(img)} 
+                elif self.alg == 'wsc':
+                    return {'idx_ulb': idx, 'x_ulb_w': img_w, 'x_ulb_s_0': self.strong_transform(img), 'x_ulb_s_1': self.strong_transform(img)}
                 else:
                     return {'idx_ulb': idx, 'x_ulb_w': img_w, 'x_ulb_s': self.strong_transform(img)} 
 

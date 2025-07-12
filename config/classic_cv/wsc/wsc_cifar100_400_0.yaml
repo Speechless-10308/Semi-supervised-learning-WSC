@@ -1,8 +1,8 @@
-algorithm: flexmatch
+algorithm: wsc
 save_dir: ./saved_models/classic_cv
-save_name: flexmatch_cifar100_10000_0
+save_name: wsc_cifar100_400_0
 resume: True
-load_path: ./saved_models/classic_cv/flexmatch_cifar100_10000_0/latest_model.pth
+load_path: ./saved_models/classic_cv/wsc_cifar100_400_0/latest_model.pth
 overwrite: True
 use_tensorboard: True
 use_wandb: False
@@ -10,14 +10,17 @@ epoch: 256
 num_train_iter: 262144
 num_eval_iter: 5120
 num_log_iter: 256
-num_labels: 10000
+num_labels: 400
 batch_size: 64
 eval_batch_size: 256
 hard_label: True
 T: 0.5
-thresh_warmup: True
-p_cutoff: 0.95
+dist_align: True
+dist_uniform: True
+per_class: False
+ema_p: 0.999
 ulb_loss_ratio: 1.0
+n_sigma: 2
 uratio: 7
 ema_m: 0.999
 crop_ratio: 0.875
@@ -30,7 +33,6 @@ layer_decay: 1.0
 amp: False
 clip: 0.0
 use_cat: True
-use_refix: False
 net: wrn_28_8
 net_from_name: False
 data_dir: /home/wangjunjie/dataset
@@ -42,6 +44,13 @@ seed: 0
 world_size: 1
 rank: 0
 multiprocessing_distributed: True
-dist_url: tcp://127.0.0.1:10001
+dist_url: tcp://127.0.0.1:10069
 dist_backend: nccl
 gpu: None
+
+spec_alpha: 2.0
+spec_beta: 200.0
+consist_lam: 3.0
+proj_size: 128
+lambda_wsc: 1.0
+p_cutoff: 0.5

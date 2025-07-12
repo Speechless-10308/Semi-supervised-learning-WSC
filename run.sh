@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=2 python train.py --c config/classic_cv/simmatch/simmatch_cifar100_10000_0.yaml

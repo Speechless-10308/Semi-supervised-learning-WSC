@@ -21,8 +21,9 @@ def over_write_args_from_file(args, yml):
     """
     if yml == '':
         return
+    yaml_loader = yaml.YAML()
     with open(yml, 'r', encoding='utf-8') as f:
-        dic = yaml.load(f.read(), Loader=yaml.Loader)
+        dic = yaml_loader.load(f)
         for k in dic:
             setattr(args, k, dic[k])
 
