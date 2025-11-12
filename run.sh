@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES=2 python train.py --c config/classic_cv/simmatch/simmatch_cifar100_10000_0.yaml
+CUDA_VISIBLE_DEVICES=0 python train.py --c config/usb_cv/softmatch/softmatch_semi_aves_3959_0.yaml

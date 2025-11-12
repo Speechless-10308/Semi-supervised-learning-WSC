@@ -92,7 +92,10 @@ class BasicDataset(Dataset):
             img_w = self.transform(img)
             if not self.is_ulb:
                 if self.alg == 'wsc':
-                    return {'idx_lb': idx, 'x_lb_w': img_w, 'x_lb_s_0': self.strong_transform(img), 'x_lb_s_1': self.strong_transform(img), 'y_lb': target}
+                    if self.strong_transform is not None:
+                        return {'idx_lb': idx, 'x_lb_w': img_w, 'x_lb_s_0': self.strong_transform(img), 'x_lb_s_1': self.strong_transform(img), 'y_lb': target}
+                    else:
+                        return {'idx_lb': idx, 'x_lb': img_w, 'y_lb': target}
                 else:
                     return {'idx_lb': idx, 'x_lb': img_w, 'y_lb': target} 
             else:

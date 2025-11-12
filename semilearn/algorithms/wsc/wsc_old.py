@@ -46,7 +46,7 @@ class WSC_Net(nn.Module):
 @ALGORITHMS.register('wsc')
 class WSC(AlgorithmBase):
     """
-        WSC base on FixMatch algorithm (https://openreview.net/forum?id=ymt1zQXBDiF&referrer=%5BAuthor%20Console%5D(%2Fgroup%3Fid%3DICLR.cc%2F2023%2FConference%2FAuthors%23your-submissions)).
+        WSC base on SoftMatch algorithm (https://openreview.net/forum?id=ymt1zQXBDiF&referrer=%5BAuthor%20Console%5D(%2Fgroup%3Fid%3DICLR.cc%2F2023%2FConference%2FAuthors%23your-submissions)).
 
         Args:
             - args (`argparse`):
@@ -84,7 +84,11 @@ class WSC(AlgorithmBase):
 
     def set_hooks(self):
         self.register_hook(PseudoLabelingHook(), "PseudoLabelingHook")
-        self.register_hook(FixedThresholdingHook(), "MaskingHook")
+        self.register_hook(
+            DistAlignEMAHook(num_classes=self.num_classes, momentum=self.args.ema_p, p_target_type='uniform' if self.args.dist_uniform else 'model'), 
+            "DistAlignHook")
+        self.register_hook(SoftMatchWeightingHook(num_classes=self.num_classes, n_sigma=self.args.n_sigma, momentum=self.args.ema_p, per_class=self.args.per_class), "MaskingHook")
+        # self.register_hook(FixedThresholdingHook(), "FixedThresholdingHook")
         self.register_hook(WSCFilterHook(), "WSCFilterHook")
         super().set_hooks()
 
@@ -121,20 +125,26 @@ class WSC(AlgorithmBase):
             probs_x_lb = torch.softmax(logits_x_lb_w.detach(), dim=-1)
             probs_x_ulb_w = torch.softmax(logits_x_ulb_w.detach(), dim=-1)
 
+            # uniform distribution alignment 
+            probs_x_ulb_w = self.call_hook("dist_align", "DistAlignHook", probs_x_ulb=probs_x_ulb_w, probs_x_lb=probs_x_lb)
 
             # calculate weight
             mask = self.call_hook("masking", "MaskingHook", logits_x_ulb=probs_x_ulb_w, softmax_x_ulb=False)
 
+            # mask_wsc = self.call_hook("masking", "FixedThresholdingHook", logits_x_ulb=probs_x_ulb_w, softmax_x_ulb=False)
+
             # generate unlabeled targets using pseudo label hook
             pseudo_label = self.call_hook("gen_ulb_targets", "PseudoLabelingHook", 
-                                          logits=probs_x_ulb_w,
+                                          # make sure this is logits, not dist aligned probs
+                                          # uniform alignment in softmatch do not use aligned probs for generating pesudo labels
+                                          logits=logits_x_ulb_w,
                                           use_hard_label=self.use_hard_label,
                                           T=self.T)
             
             soft_pseudo_label = self.call_hook("gen_ulb_targets", "PseudoLabelingHook", 
                                           # make sure this is logits, not dist aligned probs
                                           # uniform alignment in softmatch do not use aligned probs for generating pesudo labels
-                                          logits=probs_x_ulb_w,
+                                          logits=logits_x_ulb_w,
                                           use_hard_label=False,
                                           T=self.T)
 
@@ -148,7 +158,6 @@ class WSC(AlgorithmBase):
                                           'ce',
                                           mask=mask)
             
-            # wsc loss
             wsc_feat_dict, wsc_q = self.call_hook("get_feats", "WSCFilterHook", feat_dict=feat_dict, y_lb=y_lb, pseudo_label=soft_pseudo_label, mask=mask)
 
             wsc_loss, _, _ = self.weak_spectral_loss(
@@ -157,51 +166,39 @@ class WSC(AlgorithmBase):
                 wsc_feat_dict['x_ulb_s_0'], wsc_feat_dict['x_ulb_s_1'],
             )
 
-            if self.args.linear_warmup:
-                lambda_w = float(self.epoch) / float(self.epochs)
-            else:
-                lambda_w = 1
-            self.weak_spectral_loss.beta = lambda_w * self.spec_beta
+            lambda_w = float(self.epoch) / float(self.epochs)
 
-            total_loss = sup_loss + self.lambda_u * unsup_loss + lambda_w * wsc_loss
 
-            # entropy loss
-            if self.args.entropy_loss:
-                avg_prediction = torch.mean(logits_x_ulb_w.softmax(dim=-1), dim=0)
-                prior_distr = 1.0/self.num_classes * torch.ones_like(avg_prediction)
-                avg_prediction = torch.clamp(avg_prediction, min = 1e-6, max = 1.0)
-                balance_kl =  torch.mean(-(prior_distr * torch.log(avg_prediction)).sum(dim=0))
-                entropy_loss = 0.1 * balance_kl
-                total_loss += entropy_loss
+            total_loss = sup_loss + self.lambda_u / 2 * unsup_loss + lambda_w * wsc_loss
+
 
         out_dict = self.process_out_dict(loss=total_loss, feat=feat_dict)
         log_dict = self.process_log_dict(sup_loss=sup_loss.item(), 
                                          unsup_loss=unsup_loss.item(), 
                                          wsc_loss=wsc_loss.item(),
-                                         current_beta=self.weak_spectral_loss.beta,
                                          total_loss=total_loss.item(), 
                                          util_ratio=mask.float().mean().item())
         return out_dict, log_dict
 
     # TODO: change these
-    # def get_save_dict(self):
-    #     save_dict = super().get_save_dict()
-    #     # additional saving arguments
-    #     save_dict['p_model'] = self.hooks_dict['DistAlignHook'].p_model.cpu()
-    #     save_dict['p_target'] = self.hooks_dict['DistAlignHook'].p_target.cpu()
-    #     save_dict['prob_max_mu_t'] = self.hooks_dict['MaskingHook'].prob_max_mu_t.cpu()
-    #     save_dict['prob_max_var_t'] = self.hooks_dict['MaskingHook'].prob_max_var_t.cpu()
-    #     return save_dict
+    def get_save_dict(self):
+        save_dict = super().get_save_dict()
+        # additional saving arguments
+        save_dict['p_model'] = self.hooks_dict['DistAlignHook'].p_model.cpu()
+        save_dict['p_target'] = self.hooks_dict['DistAlignHook'].p_target.cpu()
+        save_dict['prob_max_mu_t'] = self.hooks_dict['MaskingHook'].prob_max_mu_t.cpu()
+        save_dict['prob_max_var_t'] = self.hooks_dict['MaskingHook'].prob_max_var_t.cpu()
+        return save_dict
 
 
-    # def load_model(self, load_path):
-    #     checkpoint = super().load_model(load_path)
-    #     self.hooks_dict['DistAlignHook'].p_model = checkpoint['p_model'].cuda(self.args.gpu)
-    #     self.hooks_dict['DistAlignHook'].p_target = checkpoint['p_target'].cuda(self.args.gpu)
-    #     self.hooks_dict['MaskingHook'].prob_max_mu_t = checkpoint['prob_max_mu_t'].cuda(self.args.gpu)
-    #     self.hooks_dict['MaskingHook'].prob_max_var_t = checkpoint['prob_max_var_t'].cuda(self.args.gpu)
-    #     self.print_fn("additional parameter loaded")
-    #     return checkpoint
+    def load_model(self, load_path):
+        checkpoint = super().load_model(load_path)
+        self.hooks_dict['DistAlignHook'].p_model = checkpoint['p_model'].cuda(self.args.gpu)
+        self.hooks_dict['DistAlignHook'].p_target = checkpoint['p_target'].cuda(self.args.gpu)
+        self.hooks_dict['MaskingHook'].prob_max_mu_t = checkpoint['prob_max_mu_t'].cuda(self.args.gpu)
+        self.hooks_dict['MaskingHook'].prob_max_var_t = checkpoint['prob_max_var_t'].cuda(self.args.gpu)
+        self.print_fn("additional parameter loaded")
+        return checkpoint
 
     @staticmethod
     def get_argument():
@@ -210,7 +207,6 @@ class WSC(AlgorithmBase):
             SSL_Argument('--T', float, 0.5),
             SSL_Argument('--dist_align', str2bool, True),
             SSL_Argument('--dist_uniform', str2bool, True),
-            SSL_Argument('--entropy_loss', str2bool, True),
             SSL_Argument('--ema_p', float, 0.999),
             SSL_Argument('--n_sigma', int, 2),
             SSL_Argument('--per_class', str2bool, False),
@@ -220,5 +216,4 @@ class WSC(AlgorithmBase):
             SSL_Argument('--lambda_wsc', float, 1.0),
             SSL_Argument('--p_cutoff', float, 0.5),
             SSL_Argument('--proj_size', int, 128),
-            SSL_Argument('--linear_warmup', bool, True)
         ]

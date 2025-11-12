@@ -35,7 +35,7 @@ clip: 0.0
 use_cat: True
 net: wrn_28_8
 net_from_name: False
-data_dir: /home/wangjunjie/dataset
+data_dir: ./data
 dataset: cifar100
 train_sampler: RandomSampler
 num_classes: 100
@@ -52,3 +52,4 @@ spec_alpha: 2.0
 spec_beta: 200.0
 consist_lam: 3.0
 proj_size: 128
+p_cutoff: 0.95

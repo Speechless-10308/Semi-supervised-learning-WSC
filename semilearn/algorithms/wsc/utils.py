@@ -3,9 +3,11 @@
 
 
 
+from calendar import c
 from copy import deepcopy
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from semilearn.algorithms.utils import concat_all_gather
 from semilearn.algorithms.hooks import MaskingHook
@@ -93,21 +95,18 @@ class WSCFilterHook(Hook):
 
         conf_ulb_s_0 = feat_dict['x_ulb_s_0'][conf_idx]
         conf_ulb_s_1 = feat_dict['x_ulb_s_1'][conf_idx]
-        conf_pseudo_label = pseudo_label[conf_idx]
 
         feat_lb_s_0 = torch.cat([feat_dict['x_lb_s_0'], conf_ulb_s_0], dim=0)
         feat_lb_s_1 = torch.cat([feat_dict['x_lb_s_1'], conf_ulb_s_1], dim=0)
-        new_y_lb = torch.cat([y_lb, conf_pseudo_label], dim=0)
 
-        new_feat_dict = deepcopy(feat_dict)
-        new_feat_dict['x_lb_s_0'] = feat_lb_s_0
-        new_feat_dict['x_lb_s_1'] = feat_lb_s_1
+        feat_dict['x_lb_s_0'] = feat_lb_s_0
+        feat_dict['x_lb_s_1'] = feat_lb_s_1
 
-        return new_feat_dict, new_y_lb
+        y_lb = F.one_hot(y_lb, num_classes=pseudo_label.shape[1]).float()
 
+        new_y_lb = torch.cat([y_lb, pseudo_label[conf_idx]], dim=0)
 
-
-
+        return feat_dict, new_y_lb
 
 class WeakSpectralLoss(nn.Module):
     def __init__(self, alpha, beta, cons):
@@ -149,6 +148,7 @@ class WeakSpectralLoss(nn.Module):
             l1 = -2 * self.alpha * (torch.trace(zq1xzq2) + torch.trace(z1xz2)) / (zq1.shape[0] + z1.shape[0])
 
             # compute l2
+            # print(f"zq1 shape: {zq1.shape}, zq2 shape: {zq2.shape}, Q shape: {Q.shape} z1 shape: {z1.shape}, z2 shape: {z2.shape}")
             l2_1 = -2 * self.beta * (torch.sum(zq1xzq2 * Q * anti_identity_matrix_zq)) / (
                     zq1.shape[0] * (zq1.shape[0] - 1))
             l2_2 = -2 * self.beta * (torch.sum(zq1xzq1 * Q * anti_identity_matrix_zq)) / (
@@ -160,13 +160,13 @@ class WeakSpectralLoss(nn.Module):
             # compute l3
             l3_1 = (self.alpha * self.alpha * (torch.sum(pow_zq1xzq2 * anti_identity_matrix_zq) +
                                                torch.sum(pow_z1xz2 * anti_identity_matrix_z))
-                    / (zq1.shap[0] * (zq1.shape[0] - 1) + z1.shap[0] * (z1.shape[0] - 1)))
+                    / (zq1.shape[0] * (zq1.shape[0] - 1) + z1.shape[0] * (z1.shape[0] - 1)))
             l3_2 = (self.alpha * self.alpha * (torch.sum(pow_zq1xzq1 * anti_identity_matrix_zq) +
                                                torch.sum(pow_z1xz1 * anti_identity_matrix_z))
-                    / (zq1.shap[0] * (zq1.shape[0] - 1) + z1.shap[0] * (z1.shape[0] - 1)))
+                    / (zq1.shape[0] * (zq1.shape[0] - 1) + z1.shape[0] * (z1.shape[0] - 1)))
             l3_3 = (self.alpha * self.alpha * (torch.sum(pow_zq2xzq2 * anti_identity_matrix_zq) +
                                                torch.sum(pow_z2xz2 * anti_identity_matrix_z))
-                    / (zq1.shap[0] * (zq1.shape[0] - 1) + z1.shap[0] * (z1.shape[0] - 1)))
+                    / (zq1.shape[0] * (zq1.shape[0] - 1) + z1.shape[0] * (z1.shape[0] - 1)))
             l3 = (l3_1 + l3_2 + l3_3) / 3
 
             # compute l4
@@ -182,10 +182,14 @@ class WeakSpectralLoss(nn.Module):
             # compute l5
             l5 = (self.beta * self.alpha * 2 *
                   torch.sum(
-                      torch.diag_embed(W_double[:, 0]) @ pow_zqxz + (torch.diag_embed(W[:, 0]) @ pow_zq1xzq2) * anti_identity_matrix_zq)
-                  / (4 * zq1.shape[0] * z1.shape[0] + zq1.shape[0] * (zq1.shape[0] - 1)))
+                      torch.diag_embed(W_double[:, 0]) @ pow_zqxz
+                #        + (torch.diag_embed(W[:, 0]) @ pow_zq1xzq2) * anti_identity_matrix_zq
+                       )
+                  / (4 * zq1.shape[0] * z1.shape[0]
+                #    + zq1.shape[0] * (zq1.shape[0] - 1)
+                   ))
 
-            # loss = l1 + l2 + l3 + l4 + l5
+            loss = l1 + l2 + self.cons * (l3 + l4 + l5)
 
 
         else:
@@ -209,30 +213,11 @@ class WeakSpectralLoss(nn.Module):
             l2_3 = -2 * self.beta * (torch.sum(zq2xzq2 * Q * anti_identity_matrix_zq)) / (
                     zq1.shape[0] * (zq1.shape[0] - 1))
             l2 = (l2_1 + l2_2 + l2_3) / 3
-            #
-            # l3_1 = (self.alpha * self.alpha * torch.sum(pow_zq1xzq2 * anti_identity_matrix_zq)
-            #         / (zq1.shape[0] * (zq1.shape[0] - 1)))
-            # l3_2 = (self.alpha * self.alpha * torch.sum(pow_zq1xzq1 * anti_identity_matrix_zq)
-            #         / (zq1.shape[0] * (zq1.shape[0] - 1)))
-            # l3_3 = (self.alpha * self.alpha * torch.sum(pow_zq2xzq2 * anti_identity_matrix_zq)
-            #         / (zq1.shape[0] * (zq1.shape[0] - 1)))
-            # l3 = (l3_1 + l3_2 + l3_3) / 3
-            #
-            # l4_1 = (self.beta * self.beta * torch.sum(pow_zq1xzq2 * anti_identity_matrix_zq * WxW)
-            #         / (zq1.shape[0] * (zq1.shape[0] - 1)))
-            # l4_2 = (self.beta * self.beta * torch.sum(pow_zq1xzq1 * anti_identity_matrix_zq * WxW)
-            #         / (zq1.shape[0] * (zq1.shape[0] - 1)))
-            # l4_3 = (self.beta * self.beta * torch.sum(pow_zq2xzq2 * anti_identity_matrix_zq * WxW)
-            #         / (zq1.shape[0] * (zq1.shape[0] - 1)))
-            # l4 = (l4_1 + l4_2 + l4_3) / 3
-            #
-            # l5 = (self.alpha * self.beta * 2 * torch.sum(
-            #     (torch.diag_embed(W[:, 0]) @ pow_zq1xzq2) * anti_identity_matrix_zq)
-            #       / (zq1.shape[0] * (zq1.shape[0] - 1)))
-            #
-            l3_new = (self.alpha + self.beta / q.shape[1]) * (self.alpha + self.beta / q.shape[1])  * torch.sum(pow_zaxza * anti_identity_matrix_za) / (2 * zq1.shape[0] * (2 * zq1.shape[0] - 1))
+
+            l3_new = self.cons *  (self.alpha + self.beta / q.shape[1]) * (self.alpha + self.beta / q.shape[1])  * torch.sum(pow_zaxza * anti_identity_matrix_za) / (2 * zq1.shape[0] * (2 * zq1.shape[0] - 1))
             # loss = l1 + l2 + l3 + l4 + l5
-            loss = l1 + l2 + self.cons * l3_new
+            loss = l1 + l2 + l3_new
 
         return loss, l1, l2
+
 
